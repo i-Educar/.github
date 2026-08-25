@@ -1,0 +1,36 @@
+name: Sync upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Sync Portabilis upstream
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git clone --mirror \
+            https://github.com/portabilis/i-educar.git \
+            upstream.git
+
+          cd upstream.git
+
+          DEST="https://x-access-token:${MIRROR_TOKEN}@github.com/i-educar/i-educar.git"
+
+          for ref in $(git for-each-ref --format='%(refname:strip=2)' refs/heads/); do
+            git push --force "$DEST" \
+              "refs/heads/$ref:refs/heads/upstream/$ref"
+          done
+
+          git push "$DEST" \
+            '+refs/tags/*:refs/tags/*'
