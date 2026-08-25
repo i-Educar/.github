@@ -17,6 +17,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.MIRROR_APP_ID }}
+          private-key: ${{ secrets.MIRROR_APP_PRIVATE_KEY }}
+          owner: i-Educar
+          repositories: i-educar
+
       - name: Clone upstream
         run: |
           set -euo pipefail
@@ -27,7 +36,7 @@ jobs:
 
       - name: Sync upstream branches and tags
         env:
-          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+          MIRROR_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
 
