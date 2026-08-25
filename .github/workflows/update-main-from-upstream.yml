@@ -1,0 +1,58 @@
+name: Update main from upstream
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: "Upstream branch to merge into main"
+        required: true
+        default: "2.12"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  update-main:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.MIRROR_APP_ID }}
+          private-key: ${{ secrets.MIRROR_APP_PRIVATE_KEY }}
+          owner: i-Educar
+          repositories: i-educar
+
+      - name: Checkout community repository
+        uses: actions/checkout@v4
+        with:
+          repository: i-Educar/i-educar
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Merge upstream branch
+        env:
+          UPSTREAM_BRANCH: ${{ inputs.upstream_branch }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "i-Educar Mirror Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin \
+            "refs/heads/upstream/${UPSTREAM_BRANCH}:refs/remotes/origin/upstream/${UPSTREAM_BRANCH}"
+
+          git merge --no-edit \
+            "origin/upstream/${UPSTREAM_BRANCH}"
+
+      - name: Push main
+        env:
+          TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git push \
+            "https://x-access-token:${TOKEN}@github.com/i-Educar/i-educar.git" \
+            HEAD:main
