@@ -1,4 +1,4 @@
-name: Sync upstream
+name: Sync i-Educar upstream
 
 on:
   workflow_dispatch:
@@ -8,14 +8,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: sync-i-educar-upstream
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Sync Portabilis upstream
-        env:
-          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+      - name: Clone upstream
         run: |
           set -euo pipefail
 
@@ -23,14 +25,35 @@ jobs:
             https://github.com/portabilis/i-educar.git \
             upstream.git
 
+      - name: Sync upstream branches and tags
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          set -euo pipefail
+
           cd upstream.git
 
-          DEST="https://x-access-token:${MIRROR_TOKEN}@github.com/i-educar/i-educar.git"
+          DEST="https://x-access-token:${MIRROR_TOKEN}@github.com/i-Educar/i-educar.git"
 
+          # Publish every upstream branch under upstream/*
           for ref in $(git for-each-ref --format='%(refname:strip=2)' refs/heads/); do
             git push --force "$DEST" \
               "refs/heads/$ref:refs/heads/upstream/$ref"
           done
 
-          git push "$DEST" \
+          # Keep tags synchronized
+          git push --force "$DEST" \
             '+refs/tags/*:refs/tags/*'
+
+          # Remove stale upstream/* branches
+          remote_branches=$(
+            git ls-remote --heads "$DEST" 'refs/heads/upstream/*' |
+            sed 's#.*refs/heads/upstream/##'
+          )
+
+          for branch in $remote_branches; do
+            if ! git show-ref --verify --quiet "refs/heads/$branch"; then
+              git push "$DEST" \
+                --delete "upstream/$branch"
+            fi
+          done
