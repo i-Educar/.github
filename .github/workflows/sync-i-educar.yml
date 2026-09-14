@@ -27,6 +27,27 @@ jobs:
           repositories: i-educar
           permission-contents: write
           permission-workflows: write
+          permission-pull-requests: write
+
+      - name: Discover upstream default branch
+        id: upstream
+        run: |
+          set -euo pipefail
+
+          DEFAULT_BRANCH=$(
+            git ls-remote --symref \
+              https://github.com/portabilis/i-educar.git \
+              HEAD |
+            sed -n 's#^ref: refs/heads/\([^[:space:]]*\).*#\1#p'
+          )
+
+          if [ -z "$DEFAULT_BRANCH" ]; then
+            echo "Unable to determine upstream default branch." >&2
+            exit 1
+          fi
+
+          echo "default_branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "Upstream default branch: $DEFAULT_BRANCH"
 
       - name: Clone upstream
         run: |
@@ -68,3 +89,133 @@ jobs:
                 --delete "upstream/$branch"
             fi
           done
+
+      - name: Check for existing upstream sync PR
+        id: existing-pr
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          PR_NUMBER=$(
+            gh api \
+              --paginate \
+              'repos/i-Educar/i-educar/pulls?state=open&base=main&per_page=100' \
+              --jq '.[] | select(.head.ref | startswith("sync/upstream-")) | .number' |
+            head -n 1
+          )
+
+          if [ -n "$PR_NUMBER" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "An upstream sync PR is already open: #$PR_NUMBER"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare upstream merge
+        id: prepare
+        if: steps.existing-pr.outputs.exists != 'true'
+        env:
+          MIRROR_TOKEN: ${{ steps.app-token.outputs.token }}
+          DEFAULT_BRANCH: ${{ steps.upstream.outputs.default_branch }}
+        run: |
+          set -euo pipefail
+
+          DEST="https://x-access-token:${MIRROR_TOKEN}@github.com/i-Educar/i-educar.git"
+
+          git clone "$DEST" downstream
+          cd downstream
+
+          git config user.name "i-Educar Mirror Bot"
+          git config user.email "i-educar-mirror-bot@users.noreply.github.com"
+
+          git fetch origin \
+            "refs/heads/main:refs/remotes/origin/main" \
+            "refs/heads/upstream/${DEFAULT_BRANCH}:refs/remotes/origin/upstream/${DEFAULT_BRANCH}"
+
+          UPSTREAM_SHA=$(git rev-parse "origin/upstream/${DEFAULT_BRANCH}")
+          SHORT_SHA=$(git rev-parse --short=12 "$UPSTREAM_SHA")
+
+          SAFE_BRANCH=$(
+            printf '%s' "$DEFAULT_BRANCH" |
+            sed 's#[^A-Za-z0-9._-]#-#g'
+          )
+
+          SYNC_BRANCH="sync/upstream-${SAFE_BRANCH}-${SHORT_SHA}"
+
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          echo "sync_branch=$SYNC_BRANCH" >> "$GITHUB_OUTPUT"
+
+          # If the exact upstream commit is already part of main, there is
+          # nothing left to propose.
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" origin/main; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream commit $UPSTREAM_SHA is already integrated into main."
+            exit 0
+          fi
+
+          git checkout -b "$SYNC_BRANCH" origin/main
+
+          if ! git merge \
+            --no-ff \
+            --no-edit \
+            "origin/upstream/${DEFAULT_BRANCH}"
+          then
+            git merge --abort
+
+            echo "::error::Unable to merge upstream/${DEFAULT_BRANCH} into main automatically."
+            echo "::error::Manual conflict resolution is required."
+
+            exit 1
+          fi
+
+          # A merge can be historically new while producing no content
+          # changes. In that case there is no useful PR to create.
+          if git diff --quiet origin/main HEAD; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Merge produces no content changes."
+            exit 0
+          fi
+
+          git push origin "$SYNC_BRANCH"
+
+          echo "needed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open upstream sync PR
+        if: >
+          steps.existing-pr.outputs.exists != 'true' &&
+          steps.prepare.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          DEFAULT_BRANCH: ${{ steps.upstream.outputs.default_branch }}
+          UPSTREAM_SHA: ${{ steps.prepare.outputs.upstream_sha }}
+          SYNC_BRANCH: ${{ steps.prepare.outputs.sync_branch }}
+        run: |
+          set -euo pipefail
+
+          SHORT_SHA=$(printf '%s' "$UPSTREAM_SHA" | cut -c1-12)
+
+          BODY=$(cat <<EOF
+          Synchronizes our \`main\` branch with the current default branch from \`portabilis/i-educar\`.
+
+          - Upstream repository: \`portabilis/i-educar\`
+          - Upstream default branch: \`${DEFAULT_BRANCH}\`
+          - Upstream commit: \`${UPSTREAM_SHA}\`
+          - Sync branch: \`${SYNC_BRANCH}\`
+
+          This pull request was created automatically by the upstream synchronization workflow.
+
+          The merge is intentionally not automatic. CI and human review should complete before integration.
+
+          **Important:** prefer a merge commit for this synchronization PR so the upstream commit remains part of the history of \`main\`.
+          EOF
+          )
+
+          gh api \
+            repos/i-Educar/i-educar/pulls \
+            --method POST \
+            -f title="chore: sync upstream ${DEFAULT_BRANCH} (${SHORT_SHA})" \
+            -f head="$SYNC_BRANCH" \
+            -f base="main" \
+            -f body="$BODY"
