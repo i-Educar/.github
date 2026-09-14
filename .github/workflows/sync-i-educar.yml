@@ -25,6 +25,8 @@ jobs:
           private-key: ${{ secrets.MIRROR_APP_PRIVATE_KEY }}
           owner: i-Educar
           repositories: i-educar
+          permission-contents: write
+          permission-workflows: write
 
       - name: Clone upstream
         run: |
