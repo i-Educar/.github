@@ -115,15 +115,15 @@ jobs:
 
       - name: Prepare upstream merge
         id: prepare
-        if: steps.existing-pr.outputs.exists != 'true'
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           MIRROR_TOKEN: ${{ steps.app-token.outputs.token }}
           DEFAULT_BRANCH: ${{ steps.upstream.outputs.default_branch }}
+          EXISTING_PR_NUMBER: ${{ steps.existing-pr.outputs.number }}
         run: |
           set -euo pipefail
 
           DEST="https://x-access-token:${MIRROR_TOKEN}@github.com/i-Educar/i-educar.git"
-
           git clone "$DEST" downstream
           cd downstream
 
@@ -136,51 +136,58 @@ jobs:
 
           UPSTREAM_SHA=$(git rev-parse "origin/upstream/${DEFAULT_BRANCH}")
           SHORT_SHA=$(git rev-parse --short=12 "$UPSTREAM_SHA")
-
-          SAFE_BRANCH=$(
-            printf '%s' "$DEFAULT_BRANCH" |
-            sed 's#[^A-Za-z0-9._-]#-#g'
-          )
-
+          SAFE_BRANCH=$(printf '%s' "$DEFAULT_BRANCH" | sed 's#[^A-Za-z0-9._-]#-#g')
           SYNC_BRANCH="sync/upstream-${SAFE_BRANCH}-${SHORT_SHA}"
 
           echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$EXISTING_PR_NUMBER" ]; then
+            SYNC_BRANCH=$(gh api "repos/i-Educar/i-educar/pulls/${EXISTING_PR_NUMBER}" --jq '.head.ref')
+            case "$SYNC_BRANCH" in
+              sync/upstream-*) ;;
+              *) echo "::error::Unexpected sync PR branch: $SYNC_BRANCH"; exit 1 ;;
+            esac
+            git fetch origin "refs/heads/${SYNC_BRANCH}:refs/remotes/origin/${SYNC_BRANCH}"
+            git checkout -b "$SYNC_BRANCH" "origin/$SYNC_BRANCH"
+          else
+            git checkout -b "$SYNC_BRANCH" origin/main
+          fi
+
           echo "sync_branch=$SYNC_BRANCH" >> "$GITHUB_OUTPUT"
 
-          # If the exact upstream commit is already part of main, there is
-          # nothing left to propose.
-          if git merge-base --is-ancestor "$UPSTREAM_SHA" origin/main; then
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
-            echo "Upstream commit $UPSTREAM_SHA is already integrated into main."
+            echo "Latest upstream commit already included in $SYNC_BRANCH."
             exit 0
           fi
 
-          git checkout -b "$SYNC_BRANCH" origin/main
-
-          if ! git merge \
-            --no-ff \
-            --no-edit \
-            "origin/upstream/${DEFAULT_BRANCH}"
-          then
+          if ! git merge --no-ff --no-edit "origin/upstream/${DEFAULT_BRANCH}"; then
             git merge --abort
-
-            echo "::error::Unable to merge upstream/${DEFAULT_BRANCH} into main automatically."
-            echo "::error::Manual conflict resolution is required."
-
+            echo "::error::Upstream merge conflict on $SYNC_BRANCH; manual review required."
             exit 1
           fi
 
-          # A merge can be historically new while producing no content
-          # changes. In that case there is no useful PR to create.
-          if git diff --quiet origin/main HEAD; then
+          if [ -z "$EXISTING_PR_NUMBER" ] && git diff --quiet origin/main HEAD; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
             echo "Merge produces no content changes."
             exit 0
           fi
 
           git push origin "$SYNC_BRANCH"
-
           echo "needed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Update existing upstream sync PR
+        if: >-
+          steps.existing-pr.outputs.exists == 'true' &&
+          steps.prepare.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.existing-pr.outputs.number }}
+          UPSTREAM_SHA: ${{ steps.prepare.outputs.upstream_sha }}
+        run: |
+          set -euo pipefail
+          gh pr comment "$PR_NUMBER" --repo i-Educar/i-educar \
+            --body "Upstream synchronization updated to commit \`${UPSTREAM_SHA}\`. CI and human review are still required."
 
       - name: Open upstream sync PR
         if: >
