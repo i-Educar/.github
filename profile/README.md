@@ -1,11 +1,13 @@
 # i-Educar
 
-Esta organização mantém iniciativas relacionadas ao ecossistema **i-Educar**, incluindo espelhamento de código, documentação, integrações e experimentações técnicas.
+Organização do ecossistema **i-Educar**: espelhamento de código, documentação, integrações e módulos sob demanda para requisitos típicos de **editais / termos de referência** municipais.
 
-O desenvolvimento upstream do i-Educar está disponível em:
+**Site:** https://i-educar.github.io/
+
+Upstream do core:
 
 https://github.com/portabilis/i-educar
 
-Parte das iniciativas desta organização é mantida com participação da (**LibreCode coop**)[https://github.com/LibreCodeCoop], cooperativa de tecnologia que atua com software livre.
+Módulos recentes (organização `i-Educar`): alimentação escolar, apps API (família/professores), exportação unificada, aderência escolar, servidor educacional, transporte v2, checklist de ambiente de homologação, entre outros — ver a grade em [i-educar.github.io/#plugins](https://i-educar.github.io/#plugins).
 
-Esta organização é independente e busca contribuir de forma compatível e colaborativa com o ecossistema i-Educar.
+Parte das iniciativas é mantida com participação da [LibreCode coop](https://github.com/LibreCodeCoop). Esta organização é independente e busca contribuir de forma compatível com o ecossistema i-Educar.
